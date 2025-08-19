@@ -1,13 +1,9 @@
+"use client"
 import type { Metadata } from 'next'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import './globals.css'
-
-export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
-  generator: 'v0.dev',
-}
+import { SessionProvider } from "next-auth/react";
 
 export default function RootLayout({
   children,
@@ -25,7 +21,11 @@ html {
 }
         `}</style>
       </head>
-      <body>{children}</body>
+      <SessionProvider>
+      <body>
+        {children}
+      </body>
+      </SessionProvider>
     </html>
   )
 }
