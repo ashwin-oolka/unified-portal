@@ -9,9 +9,9 @@ export default function BBPSPortal() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} />
+      {/* <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} /> */}
       <main className="flex-1 overflow-hidden">
-        <DashboardContent activeModule={activeModule} />
+        {/* <DashboardContent activeModule={activeModule} /> */}
       </main>
     </div>
   )
