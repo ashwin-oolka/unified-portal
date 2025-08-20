@@ -15,4 +15,4 @@ const authOptions = {
 
 export const 
   handlers    // { GET, POST }
- = NextAuth(authOptions);
+ = NextAuth(authOptions)
