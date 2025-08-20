@@ -1,80 +1,212 @@
 "use client"
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import * as React from "react"
+import {
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
+} from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table"
 import { Progress } from "@/components/ui/progress"
-import { TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, BarChart3, Download } from "lucide-react"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
+import {
+  TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, BarChart3, Download, Info,
+} from "lucide-react"
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell,
+} from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { cn } from "@/lib/utils"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
-const performanceData = [
-  { date: "Jan 1", success: 89, failed: 11, duration: 145 },
-  { date: "Jan 2", success: 92, failed: 8, duration: 132 },
-  { date: "Jan 3", success: 88, failed: 12, duration: 156 },
-  { date: "Jan 4", success: 94, failed: 6, duration: 128 },
-  { date: "Jan 5", success: 91, failed: 9, duration: 139 },
-  { date: "Jan 6", success: 93, failed: 7, duration: 125 },
-  { date: "Jan 7", success: 90, failed: 10, duration: 142 },
+/* ----------------------------- Types (API) ----------------------------- */
+
+type DateMap = Record<string, { success: number; failed: number }>
+type ErrorMap = Record<string, number>
+type PerfRow = {
+  job_name: string
+  execution: number
+  success_rate: string // "96.4%"
+  error: number
+  performance: number // 3=Excellent, 2=Good, 1=Needs Attention
+}
+
+type CronApiResponse = {
+  date: DateMap
+  error: ErrorMap
+  performance: PerfRow[]
+}
+
+/* --------------------------- Local helpers ---------------------------- */
+
+const COLORS = [
+  "#ef4444", // API Timeout
+  "#f97316", // Invalid Parameters
+  "#eab308", // Network Error
+  "#06b6d4", // Authentication
+  "#8b5cf6", // Other
 ]
 
-const cronPerformance = [
-  { name: "HDFC Bill Fetch", executions: 28, success: 96.4, avgDuration: "2m 34s", errors: 1 },
-  { name: "ICICI Bill Fetch", executions: 42, success: 95.2, avgDuration: "1m 56s", errors: 2 },
-  { name: "SBI Bill Fetch", executions: 21, success: 85.7, avgDuration: "5m 12s", errors: 3 },
-  { name: "Notification Sender", executions: 14, success: 100.0, avgDuration: "45s", errors: 0 },
-  { name: "WhatsApp Campaign", executions: 7, success: 100.0, avgDuration: "1m 23s", errors: 0 },
-]
+function formatPercent(n: number, digits = 1) {
+  if (!isFinite(n)) return "0%"
+  return `${n.toFixed(digits)}%`
+}
 
-const errorDistribution = [
-  { name: "API Timeout", value: 35, color: "#ef4444" },
-  { name: "Invalid Parameters", value: 28, color: "#f97316" },
-  { name: "Network Error", value: 20, color: "#eab308" },
-  { name: "Authentication", value: 12, color: "#06b6d4" },
-  { name: "Other", value: 5, color: "#8b5cf6" },
-]
+function addDays(d: Date, days: number) {
+  const nd = new Date(d)
+  nd.setDate(nd.getDate() + days)
+  return nd
+}
+
+function toYMD(d: Date) {
+  return d.toISOString().slice(0, 10)
+}
+
+function lastNDaysRange(days: number) {
+  const end = new Date()
+  const start = addDays(end, -(days - 1))
+  return { start: toYMD(start), end: toYMD(end) }
+}
+
+/* ------------------------------- Component ---------------------------- */
 
 export function CronAnalytics() {
+  const [range, setRange] = React.useState<"7d" | "14d" | "30d">("7d")
+  const [loading, setLoading] = React.useState(false)
+  const [errorMsg, setErrorMsg] = React.useState<string | null>(null)
+
+  const [apiData, setApiData] = React.useState<CronApiResponse | null>(null)
+
+  // derived UI pieces
+  const dailySeries = React.useMemo(() => {
+    if (!apiData) return []
+    return Object.entries(apiData.date)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([date, v]) => ({
+        date,
+        success: v.success,
+        failed: v.failed,
+        successPct: (v.success / Math.max(1, v.success + v.failed)) * 100,
+      }))
+  }, [apiData])
+
+  const totals = React.useMemo(() => {
+    if (!apiData) return { exec: 0, succ: 0, fail: 0 }
+    let succ = 0
+    let fail = 0
+    for (const v of Object.values(apiData.date)) {
+      succ += v.success
+      fail += v.failed
+    }
+    return { exec: succ + fail, succ, fail }
+  }, [apiData])
+
+  const overallSuccessRate = React.useMemo(() => {
+    return totals.exec ? (totals.succ / totals.exec) * 100 : 0
+  }, [totals])
+
+  const failedJobsCount = React.useMemo(() => {
+    if (!apiData) return 0
+    return apiData.performance.reduce((a, r) => a + (r.error ?? 0), 0)
+  }, [apiData])
+
+  const errorPie = React.useMemo(() => {
+    if (!apiData) return []
+    const entries = Object.entries(apiData.error)
+    return entries.map(([name, value], i) => ({
+      name,
+      value,
+      color: COLORS[i % COLORS.length],
+    }))
+  }, [apiData])
+
+  // table rows
+  const perfRows = apiData?.performance ?? []
+
+  // avg duration – not provided by API (show a placeholder)
+  const avgDurationText = "—"
+
+  // Fetch whenever range changes
+  React.useEffect(() => {
+    const { start, end } =
+      range === "7d"
+        ? lastNDaysRange(7)
+        : range === "14d"
+        ? lastNDaysRange(14)
+        : lastNDaysRange(30)
+
+    const load = async () => {
+      try {
+        setLoading(true)
+        setErrorMsg(null)
+        const res = await fetch("/api/cron-performance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ startDate: start, endDate: end }),
+        })
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}))
+          throw new Error(j?.error || `HTTP ${res.status}`)
+        }
+        const json: CronApiResponse = await res.json()
+        setApiData(json)
+      } catch (e: any) {
+        setErrorMsg(e?.message || "Failed to load analytics")
+        setApiData(null)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [range])
+
   return (
     <div className="p-6 space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Cron Analytics</h1>
           <p className="text-gray-600 mt-1">Performance metrics and trend analysis</p>
         </div>
+
         <div className="flex items-center space-x-3">
-          <Select defaultValue="7d">
+          <Select value={range} onValueChange={(v: any) => setRange(v)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Select period" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="24h">Last 24 hours</SelectItem>
               <SelectItem value="7d">Last 7 days</SelectItem>
+              <SelectItem value="14d">Last 14 days</SelectItem>
               <SelectItem value="30d">Last 30 days</SelectItem>
-              <SelectItem value="90d">Last 90 days</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline">
-            <Download className="w-4 h-4 mr-2" />
+
+          <Button variant="outline" size="sm" className="gap-2">
+            <Download className="h-4 w-4" />
             Export Report
           </Button>
         </div>
       </div>
 
-      {/* Performance Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {/* KPI Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Executions</CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">112</div>
+            <div className={cn("text-2xl font-bold", loading && "animate-pulse")}>
+              {loading ? "…" : totals.exec}
+            </div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +15% from last week
+              {/* Placeholder trend text */}
+              Auto-calculated
             </div>
           </CardContent>
         </Card>
@@ -85,11 +217,13 @@ export function CronAnalytics() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">91.1%</div>
-            <Progress value={91.1} className="mt-2" />
+            <div className={cn("text-2xl font-bold", loading && "animate-pulse")}>
+              {loading ? "…" : formatPercent(overallSuccessRate)}
+            </div>
+            <Progress value={overallSuccessRate} className="mt-2" />
             <div className="flex items-center text-xs text-muted-foreground mt-1">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +2.3% improvement
+              Overall (across selected range)
             </div>
           </CardContent>
         </Card>
@@ -100,10 +234,22 @@ export function CronAnalytics() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">2m 18s</div>
+            <div className={cn("text-2xl font-bold", loading && "animate-pulse")}>
+              {loading ? "…" : avgDurationText}
+            </div>
             <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingDown className="w-3 h-3 mr-1 text-green-500" />
-              -12s faster
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1">
+                      <Info className="w-3 h-3" /> Not provided by API
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Add duration to the API to populate this card.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
           </CardContent>
         </Card>
@@ -114,17 +260,19 @@ export function CronAnalytics() {
             <XCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">6</div>
+            <div className={cn("text-2xl font-bold", loading && "animate-pulse")}>
+              {loading ? "…" : failedJobsCount}
+            </div>
             <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingDown className="w-3 h-3 mr-1 text-green-500" />
-              -3 from last week
+              <TrendingDown className="w-3 h-3 mr-1 text-red-500" />
+              Sum of errors across jobs
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Trend + Error Distribution */}
+      <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Success Rate Trend</CardTitle>
@@ -133,25 +281,24 @@ export function CronAnalytics() {
           <CardContent>
             <ChartContainer
               config={{
-                success: {
-                  label: "Success Rate",
-                  color: "hsl(var(--chart-1))",
-                },
-                failed: {
-                  label: "Failed Rate",
-                  color: "hsl(var(--chart-2))",
-                },
+                success: { label: "Success % " },
+                failed: { label: "Failed" },
               }}
               className="h-[300px]"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={performanceData}>
+                <LineChart data={dailySeries}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
-                  <YAxis />
+                  <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                  <Line
+                    type="monotone"
+                    dataKey="successPct"
+                    dot={false}
+                    strokeWidth={2}
+                    name="Success %"
+                  />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Line type="monotone" dataKey="success" stroke="var(--color-success)" strokeWidth={2} />
-                  <Line type="monotone" dataKey="failed" stroke="var(--color-failed)" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </ChartContainer>
@@ -166,24 +313,21 @@ export function CronAnalytics() {
           <CardContent>
             <ChartContainer
               config={{
-                value: {
-                  label: "Errors",
-                  color: "hsl(var(--chart-1))",
-                },
+                error: { label: "Error" },
               }}
               className="h-[300px]"
             >
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={errorDistribution}
+                    data={errorPie}
                     cx="50%"
                     cy="50%"
                     outerRadius={80}
                     dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    label={({ name, percent }) => `${name} ${((percent??0) * 100).toFixed(0)}%`}
                   >
-                    {errorDistribution.map((entry, index) => (
+                    {errorPie.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
@@ -191,6 +335,10 @@ export function CronAnalytics() {
                 </PieChart>
               </ResponsiveContainer>
             </ChartContainer>
+
+            {errorMsg && (
+              <p className="text-sm text-red-600 mt-3">Failed to load data: {errorMsg}</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -202,49 +350,61 @@ export function CronAnalytics() {
           <CardDescription>Detailed metrics for each cron job</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Job Name</TableHead>
-                <TableHead className="text-right">Executions</TableHead>
-                <TableHead className="text-right">Success Rate</TableHead>
-                <TableHead className="text-right">Avg Duration</TableHead>
-                <TableHead className="text-right">Errors</TableHead>
-                <TableHead className="text-center">Performance</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {cronPerformance.map((job) => (
-                <TableRow key={job.name}>
-                  <TableCell className="font-medium">{job.name}</TableCell>
-                  <TableCell className="text-right">{job.executions}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end space-x-2">
-                      <span
-                        className={`font-medium ${
-                          job.success >= 95 ? "text-green-600" : job.success >= 90 ? "text-yellow-600" : "text-red-600"
-                        }`}
-                      >
-                        {job.success.toFixed(1)}%
-                      </span>
-                      <Progress value={job.success} className="w-16" />
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant="outline">{job.avgDuration}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <span className={job.errors === 0 ? "text-green-600" : "text-red-600"}>{job.errors}</span>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={job.success >= 95 ? "default" : job.success >= 90 ? "secondary" : "destructive"}>
-                      {job.success >= 95 ? "Excellent" : job.success >= 90 ? "Good" : "Needs Attention"}
-                    </Badge>
-                  </TableCell>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Job Name</TableHead>
+                  <TableHead className="text-center">Executions</TableHead>
+                  <TableHead className="text-center">Success Rate</TableHead>
+                  <TableHead className="text-center">Errors</TableHead>
+                  <TableHead className="text-center">Performance</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {(loading ? Array.from({ length: 5 }) : perfRows).map((row:any, idx) => {
+                  if (loading) {
+                    return (
+                      <TableRow key={`s-${idx}`}>
+                        <TableCell className="animate-pulse">Loading…</TableCell>
+                        <TableCell className="text-center animate-pulse">…</TableCell>
+                        <TableCell className="text-center animate-pulse">…</TableCell>
+                        <TableCell className="text-center animate-pulse">…</TableCell>
+                        <TableCell className="text-center animate-pulse">…</TableCell>
+                      </TableRow>
+                    )
+                  }
+                  const successNum = parseFloat(row.success_rate.replace("%", "")) || 0
+                  return (
+                    <TableRow key={row.job_name}>
+                      <TableCell className="font-medium">{row.job_name}</TableCell>
+                      <TableCell className="text-center">{row.execution}</TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <span>{row.success_rate}</span>
+                          <Progress value={successNum} className="w-28" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">{row.error}</TableCell>
+                      <TableCell className="text-center">
+                        <Badge
+                          variant={
+                            successNum >= 95 ? "default" : successNum >= 90 ? "secondary" : "destructive"
+                          }
+                        >
+                          {successNum >= 95
+                            ? "Excellent"
+                            : successNum >= 90
+                            ? "Good"
+                            : "Needs Attention"}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
     </div>
