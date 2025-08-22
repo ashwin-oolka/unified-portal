@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -21,65 +21,108 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Search, Plus, Edit, History, CheckCircle, XCircle, AlertTriangle, Save, X } from "lucide-react"
 
-const billerConfigs = [
-  {
-    id: 1,
-    name: "HDFC Bank",
-    code: "HDFC001",
-    status: "active",
-    parameters: {
-      accountNumber: { regex: "^[0-9]{10,16}$", required: true },
-      customerID: { regex: "^[A-Z0-9]{8,12}$", required: false },
-      mobileNumber: { regex: "^[6-9][0-9]{9}$", required: true },
-    },
-    lastUpdated: "2024-01-15 14:30:00",
-    updatedBy: "admin@oolka.com",
-    successRate: 95.2,
-  },
-  {
-    id: 2,
-    name: "ICICI Bank",
-    code: "ICICI001",
-    status: "active",
-    parameters: {
-      accountNumber: { regex: "^[0-9]{12,16}$", required: true },
-      debitCardNumber: { regex: "^[0-9]{16}$", required: false },
-      mobileNumber: { regex: "^[6-9][0-9]{9}$", required: true },
-    },
-    lastUpdated: "2024-01-14 09:15:00",
-    updatedBy: "ops@oolka.com",
-    successRate: 92.1,
-  },
-  {
-    id: 3,
-    name: "SBI",
-    code: "SBI001",
-    status: "maintenance",
-    parameters: {
-      accountNumber: { regex: "^[0-9]{11,17}$", required: true },
-      cifNumber: { regex: "^[0-9]{11}$", required: false },
-      mobileNumber: { regex: "^[6-9][0-9]{9}$", required: true },
-    },
-    lastUpdated: "2024-01-13 16:45:00",
-    updatedBy: "tech@oolka.com",
-    successRate: 88.5,
-  },
-]
+type Biller = {
+  billerId: string
+  biller_name: string
+  status: string
+  number: number | string
+  parameters: any
+  late_updated: string
+}
+
+type ParamRow = { title: string; required: boolean; regex: string; paramsId: string }
+type HistoryRow = { description: string; log: string }
 
 export function BillerManagement() {
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedBiller, setSelectedBiller] = useState<any>(null)
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [billers, setBillers] = useState<Biller[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [selectedBiller, setSelectedBiller] = useState<Biller | null>(null)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+
+  // biller-param state
+  const [paramLoading, setParamLoading] = useState(false)
+  const [paramError, setParamError] = useState<string | null>(null)
+  const [parameters, setParameters] = useState<ParamRow[]>([])
+  const [historyRows, setHistoryRows] = useState<HistoryRow[]>([])
+
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
 
-  const filteredBillers = billerConfigs.filter(
-    (biller) =>
-      biller.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      biller.code.toLowerCase().includes(searchTerm.toLowerCase()),
-  )
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        setLoading(true)
+        const res = await fetch("/api/all-billers", { cache: "no-store" })
+        const json = await res.json()
+        if (!cancelled) {
+          if (!res.ok) throw new Error(json?.error || "Failed to load billers")
+          const list: Biller[] = json?.response?.billers ?? []
+          setBillers(list)
+        }
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message ?? "Something went wrong")
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
-  const handleEditBiller = (biller: any) => {
-    setSelectedBiller(biller)
+  // Load parameters when edit dialog opens for a specific biller
+  useEffect(() => {
+    let cancelled = false
+    async function loadParams(billerId: string) {
+      try {
+        setParamLoading(true)
+        setParamError(null)
+        setParameters([])
+        setHistoryRows([])
+
+        const res = await fetch("/api/biller-param", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ biller_id: billerId }),
+        })
+        const json = await res.json()
+        if (!cancelled) {
+          if (!res.ok) throw new Error(json?.error || "Failed to fetch biller parameters")
+          const resp = json?.response ?? {}
+          setParameters(Array.isArray(resp?.parameters) ? resp.parameters : [])
+          setHistoryRows(Array.isArray(resp?.history) ? resp.history : [])
+        }
+      } catch (e: any) {
+        if (!cancelled) setParamError(e?.message ?? "Something went wrong")
+      } finally {
+        if (!cancelled) setParamLoading(false)
+      }
+    }
+
+    if (isEditDialogOpen && selectedBiller?.billerId) {
+      loadParams(selectedBiller.billerId)
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [isEditDialogOpen, selectedBiller?.billerId])
+
+  const filteredBillers = useMemo(() => {
+    const byQuery = (b: Biller) =>
+      b.biller_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      b.billerId.toLowerCase().includes(searchTerm.toLowerCase())
+
+    const byStatus = (b: Biller) => (statusFilter === "all" ? true : b.status.toLowerCase() === statusFilter)
+
+    return billers.filter((b) => byQuery(b) && byStatus(b))
+  }, [billers, searchTerm, statusFilter])
+
+  const handleEditBiller = (b: Biller) => {
+    setSelectedBiller(b)
     setIsEditDialogOpen(true)
   }
 
@@ -88,7 +131,6 @@ export function BillerManagement() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Biller Management</h1>
-          <p className="text-gray-600 mt-1">Configure and manage biller parameters</p>
         </div>
         <Button onClick={() => setIsAddDialogOpen(true)}>
           <Plus className="w-4 h-4 mr-2" />
@@ -96,22 +138,21 @@ export function BillerManagement() {
         </Button>
       </div>
 
-      {/* Search and Filters */}
       <Card>
         <CardHeader>
           <CardTitle>Biller Configuration</CardTitle>
-          <CardDescription>Manage biller parameters and validation rules</CardDescription>
+          <CardDescription>Manage billers and their parameters</CardDescription>
           <div className="flex items-center space-x-4 mt-4">
             <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-4 w-4" />
               <Input
-                placeholder="Search billers..."
+                placeholder="Search billers by name or ID..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
               />
             </div>
-            <Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
@@ -124,86 +165,85 @@ export function BillerManagement() {
             </Select>
           </div>
         </CardHeader>
+
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Biller Name</TableHead>
-                <TableHead>Code</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Success Rate</TableHead>
-                <TableHead>Parameters</TableHead>
-                <TableHead>Last Updated</TableHead>
-                <TableHead className="text-center">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredBillers.map((biller) => (
-                <TableRow key={biller.id}>
-                  <TableCell className="font-medium">{biller.name}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{biller.code}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        biller.status === "active"
-                          ? "default"
-                          : biller.status === "maintenance"
-                            ? "secondary"
-                            : "destructive"
-                      }
-                    >
-                      {biller.status === "active" && <CheckCircle className="w-3 h-3 mr-1" />}
-                      {biller.status === "maintenance" && <AlertTriangle className="w-3 h-3 mr-1" />}
-                      {biller.status === "inactive" && <XCircle className="w-3 h-3 mr-1" />}
-                      {biller.status.charAt(0).toUpperCase() + biller.status.slice(1)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={`font-medium ${
-                        biller.successRate >= 90
-                          ? "text-green-600"
-                          : biller.successRate >= 80
-                            ? "text-yellow-600"
-                            : "text-red-600"
-                      }`}
-                    >
-                      {biller.successRate}%
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{Object.keys(biller.parameters).length} params</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-500">
-                    {biller.lastUpdated}
-                    <br />
-                    <span className="text-xs">by {biller.updatedBy}</span>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <div className="flex items-center justify-center space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => handleEditBiller(biller)}>
-                        <Edit className="w-3 h-3" />
-                      </Button>
-                      <Button variant="outline" size="sm">
-                        <History className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  </TableCell>
+          {loading && <div className="text-sm text-gray-500">Loading…</div>}
+          {error && <div className="text-sm text-red-600">Error: {error}</div>}
+
+          {!loading && !error && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Biller Name</TableHead>
+                  <TableHead>Biller ID</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Number</TableHead>
+                  <TableHead>Parameters</TableHead>
+                  <TableHead>Last Updated</TableHead>
+                  <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {filteredBillers.map((b) => {
+                  const statusLower = (b.status || "").toLowerCase()
+                  return (
+                    <TableRow key={`${b.billerId}-${b.biller_name}`}>
+                      <TableCell className="font-medium">{b.biller_name || "-"}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{b.billerId || "-"}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            statusLower === "active"
+                              ? "default"
+                              : statusLower === "maintenance"
+                              ? "secondary"
+                              : "destructive"
+                          }
+                        >
+                          {statusLower === "active" && <CheckCircle className="w-3 h-3 mr-1" />}
+                          {statusLower === "maintenance" && <AlertTriangle className="w-3 h-3 mr-1" />}
+                          {statusLower !== "active" && statusLower !== "maintenance" && (
+                            <XCircle className="w-3 h-3 mr-1" />
+                          )}
+                          {b.status || "-"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{String(b.number ?? "-")}</TableCell>
+                      <TableCell>
+                        {b.parameters && typeof b.parameters === "object"
+                          ? `${Object.keys(b.parameters).length} params`
+                          : String(b.parameters ?? "-")}
+                      </TableCell>
+                      <TableCell className="text-sm text-gray-500">
+                        {b.late_updated ? new Date(b.late_updated).toLocaleString() : "-"}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center space-x-2">
+                          <Button variant="outline" size="sm" onClick={() => handleEditBiller(b)}>
+                            <Edit className="w-3 h-3" />
+                          </Button>
+                          <Button variant="outline" size="sm" title="History in dialog">
+                            <History className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 
       {/* Edit Biller Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Edit Biller Configuration</DialogTitle>
-            <DialogDescription>Modify parameters and validation rules for {selectedBiller?.name}</DialogDescription>
+            <DialogTitle>Edit Biller</DialogTitle>
+            <DialogDescription>Modify details for {selectedBiller?.biller_name}</DialogDescription>
           </DialogHeader>
 
           {selectedBiller && (
@@ -215,89 +255,70 @@ export function BillerManagement() {
               </TabsList>
 
               <TabsContent value="parameters" className="space-y-4">
-                <div className="grid gap-4">
-                  {Object.entries(selectedBiller.parameters).map(([key, param]: [string, any]) => (
-                    <div key={key} className="grid grid-cols-2 gap-4 p-4 border rounded-lg">
-                      <div>
-                        <Label htmlFor={key} className="text-sm font-medium">
-                          {key.charAt(0).toUpperCase() + key.slice(1)}
-                        </Label>
-                        <div className="flex items-center space-x-2 mt-2">
-                          <Switch checked={param.required} />
-                          <span className="text-sm text-gray-500">Required</span>
-                        </div>
-                      </div>
-                      <div>
-                        <Label htmlFor={`${key}-regex`} className="text-sm font-medium">
-                          Validation Regex
-                        </Label>
-                        <Input
-                          id={`${key}-regex`}
-                          value={param.regex}
-                          className="mt-1 font-mono text-sm"
-                          placeholder="Enter regex pattern"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {paramLoading && <div className="text-sm text-gray-500">Loading parameters…</div>}
+                {paramError && <div className="text-sm text-red-600">Error: {paramError}</div>}
 
-                <div className="flex items-center space-x-2 pt-4">
-                  <Button variant="outline">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Parameter
-                  </Button>
-                </div>
+                {!paramLoading && !paramError && (
+                  <div className="grid gap-4">
+                    {parameters.length > 0 ? (
+                      parameters.map((p, idx) => (
+                        <div key={`${p.paramsId}-${idx}`} className="grid grid-cols-2 gap-4 p-4 border rounded-lg">
+                          <div>
+                            <Label className="text-sm font-medium">Title</Label>
+                            <Input value={p.title} readOnly />
+                            <div className="flex items-center space-x-2 mt-2">
+                              <Switch checked={!!p.required} disabled />
+                              <span className="text-sm text-gray-500">Required</span>
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Validation Regex</Label>
+                            <Input value={p.regex} className="mt-1 font-mono text-sm" readOnly />
+                            <div className="text-xs text-gray-500 mt-2">paramsId: {p.paramsId || "-"}</div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-gray-500">No parameters returned for this biller.</div>
+                    )}
+                  </div>
+                )}
               </TabsContent>
 
               <TabsContent value="settings" className="space-y-4">
                 <div className="grid gap-4">
                   <div>
-                    <Label htmlFor="biller-name">Biller Name</Label>
-                    <Input id="biller-name" value={selectedBiller.name} />
+                    <Label>Biller Name</Label>
+                    <Input value={selectedBiller.biller_name} readOnly />
                   </div>
                   <div>
-                    <Label htmlFor="biller-code">Biller Code</Label>
-                    <Input id="biller-code" value={selectedBiller.code} />
+                    <Label>Biller ID</Label>
+                    <Input value={selectedBiller.billerId} readOnly />
                   </div>
                   <div>
-                    <Label htmlFor="status">Status</Label>
-                    <Select value={selectedBiller.status}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="maintenance">Maintenance</SelectItem>
-                        <SelectItem value="inactive">Inactive</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label>Status</Label>
+                    <Input value={selectedBiller.status} readOnly />
                   </div>
                 </div>
               </TabsContent>
 
               <TabsContent value="history" className="space-y-4">
-                <div className="space-y-3">
-                  {[
-                    {
-                      date: "2024-01-15 14:30:00",
-                      user: "admin@oolka.com",
-                      action: "Updated regex for accountNumber parameter",
-                    },
-                    { date: "2024-01-10 09:15:00", user: "ops@oolka.com", action: "Added mobileNumber parameter" },
-                    { date: "2024-01-05 16:45:00", user: "tech@oolka.com", action: "Created biller configuration" },
-                  ].map((entry, index) => (
-                    <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-gray-900">{entry.action}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {entry.date} by {entry.user}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {paramLoading && <div className="text-sm text-gray-500">Loading history…</div>}
+                {paramError && <div className="text-sm text-red-600">Error: {paramError}</div>}
+                {!paramLoading && !paramError && (
+                  <div className="space-y-3">
+                    {historyRows.length > 0 ? (
+                      historyRows.map((h, i) => (
+                        <div key={i} className="p-3 border rounded-lg">
+                          <div className="text-sm font-medium">{h.description || "-"}</div>
+                          <div className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{h.log || "-"}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-gray-500">No history entries.</div>
+                    )}
+                  </div>
+                )}
               </TabsContent>
             </Tabs>
           )}
@@ -305,9 +326,9 @@ export function BillerManagement() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               <X className="w-4 h-4 mr-2" />
-              Cancel
+              Close
             </Button>
-            <Button>
+            <Button disabled>
               <Save className="w-4 h-4 mr-2" />
               Save Changes
             </Button>
@@ -315,12 +336,12 @@ export function BillerManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Add New Biller Dialog */}
+      {/* Add New Biller Dialog (placeholder) */}
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Add New Biller</DialogTitle>
-            <DialogDescription>Create a new biller configuration with parameters</DialogDescription>
+            <DialogDescription>Create a new biller configuration</DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4">
@@ -329,8 +350,8 @@ export function BillerManagement() {
               <Input id="new-biller-name" placeholder="Enter biller name" />
             </div>
             <div>
-              <Label htmlFor="new-biller-code">Biller Code</Label>
-              <Input id="new-biller-code" placeholder="Enter unique biller code" />
+              <Label htmlFor="new-biller-code">Biller ID</Label>
+              <Input id="new-biller-code" placeholder="Enter unique biller ID" />
             </div>
             <div>
               <Label htmlFor="new-biller-description">Description</Label>
@@ -342,7 +363,7 @@ export function BillerManagement() {
             <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
               Cancel
             </Button>
-            <Button>Create Biller</Button>
+            <Button disabled>Create Biller</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
