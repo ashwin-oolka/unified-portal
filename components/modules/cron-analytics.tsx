@@ -16,12 +16,17 @@ import { Progress } from "@/components/ui/progress"
 import {
   TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, BarChart3, Download, Info,
 } from "lucide-react"
+
+// Recharts (aliased Tooltip to avoid name clash with shadcn Tooltip)
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
+  PieChart, Pie, Cell, Tooltip as RechartsTooltip,
 } from "recharts"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { cn } from "@/lib/utils"
+
+// shadcn/ui Tooltip (for the little “info” hover)
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+
+import { cn } from "@/lib/utils"
 
 /* ----------------------------- Types (API) ----------------------------- */
 
@@ -30,9 +35,9 @@ type ErrorMap = Record<string, number>
 type PerfRow = {
   job_name: string
   execution: number
-  success_rate: string // "96.4%"
+  success_rate: string // e.g. "96.4%"
   error: number
-  performance: number // 3=Excellent, 2=Good, 1=Needs Attention
+  performance: number
 }
 
 type CronApiResponse = {
@@ -43,13 +48,7 @@ type CronApiResponse = {
 
 /* --------------------------- Local helpers ---------------------------- */
 
-const COLORS = [
-  "#ef4444", // API Timeout
-  "#f97316", // Invalid Parameters
-  "#eab308", // Network Error
-  "#06b6d4", // Authentication
-  "#8b5cf6", // Other
-]
+const COLORS = ["#ef4444", "#f97316", "#eab308", "#06b6d4", "#8b5cf6"]
 
 function formatPercent(n: number, digits = 1) {
   if (!isFinite(n)) return "0%"
@@ -74,24 +73,26 @@ function lastNDaysRange(days: number) {
 
 /* ------------------------------- Component ---------------------------- */
 
-export function CronAnalytics() {
+function CronAnalyticsInner() {
   const [range, setRange] = React.useState<"7d" | "14d" | "30d">("7d")
   const [loading, setLoading] = React.useState(false)
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null)
-
   const [apiData, setApiData] = React.useState<CronApiResponse | null>(null)
 
-  // derived UI pieces
+  // Build series for charts
   const dailySeries = React.useMemo(() => {
     if (!apiData) return []
     return Object.entries(apiData.date)
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([date, v]) => ({
-        date,
-        success: v.success,
-        failed: v.failed,
-        successPct: (v.success / Math.max(1, v.success + v.failed)) * 100,
-      }))
+      .map(([date, v]) => {
+        const total = Math.max(1, v.success + v.failed)
+        return {
+          date,
+          success: v.success,
+          failed: v.failed,
+          successPct: (v.success / total) * 100,
+        }
+      })
   }, [apiData])
 
   const totals = React.useMemo(() => {
@@ -105,9 +106,10 @@ export function CronAnalytics() {
     return { exec: succ + fail, succ, fail }
   }, [apiData])
 
-  const overallSuccessRate = React.useMemo(() => {
-    return totals.exec ? (totals.succ / totals.exec) * 100 : 0
-  }, [totals])
+  const overallSuccessRate = React.useMemo(
+    () => (totals.exec ? (totals.succ / totals.exec) * 100 : 0),
+    [totals]
+  )
 
   const failedJobsCount = React.useMemo(() => {
     if (!apiData) return 0
@@ -116,28 +118,22 @@ export function CronAnalytics() {
 
   const errorPie = React.useMemo(() => {
     if (!apiData) return []
-    const entries = Object.entries(apiData.error)
-    return entries.map(([name, value], i) => ({
+    return Object.entries(apiData.error).map(([name, value], i) => ({
       name,
       value,
       color: COLORS[i % COLORS.length],
     }))
   }, [apiData])
 
-  // table rows
   const perfRows = apiData?.performance ?? []
+  const avgDurationText = "—" // not provided by upstream API
 
-  // avg duration – not provided by API (show a placeholder)
-  const avgDurationText = "—"
-
-  // Fetch whenever range changes
+  // Fetch on range change
   React.useEffect(() => {
     const { start, end } =
-      range === "7d"
-        ? lastNDaysRange(7)
-        : range === "14d"
-        ? lastNDaysRange(14)
-        : lastNDaysRange(30)
+      range === "7d" ? lastNDaysRange(7) :
+      range === "14d" ? lastNDaysRange(14) :
+      lastNDaysRange(30)
 
     const load = async () => {
       try {
@@ -150,7 +146,7 @@ export function CronAnalytics() {
         })
         if (!res.ok) {
           const j = await res.json().catch(() => ({}))
-          throw new Error(j?.error || `HTTP ${res.status}`)
+          throw new Error((j as any)?.error || `HTTP ${res.status}`)
         }
         const json: CronApiResponse = await res.json()
         setApiData(json)
@@ -185,7 +181,21 @@ export function CronAnalytics() {
             </SelectContent>
           </Select>
 
-          <Button variant="outline" size="sm" className="gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              if (!apiData) return
+              const blob = new Blob([JSON.stringify(apiData, null, 2)], { type: "application/json" })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement("a")
+              a.href = url
+              a.download = `cron-performance-${Date.now()}.json`
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+          >
             <Download className="h-4 w-4" />
             Export Report
           </Button>
@@ -205,7 +215,6 @@ export function CronAnalytics() {
             </div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              {/* Placeholder trend text */}
               Auto-calculated
             </div>
           </CardContent>
@@ -223,7 +232,7 @@ export function CronAnalytics() {
             <Progress value={overallSuccessRate} className="mt-2" />
             <div className="flex items-center text-xs text-muted-foreground mt-1">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              Overall (across selected range)
+              Overall (selected range)
             </div>
           </CardContent>
         </Card>
@@ -279,13 +288,7 @@ export function CronAnalytics() {
             <CardDescription>Daily success rate over time</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer
-              config={{
-                success: { label: "Success % " },
-                failed: { label: "Failed" },
-              }}
-              className="h-[300px]"
-            >
+            <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={dailySeries}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -298,10 +301,10 @@ export function CronAnalytics() {
                     strokeWidth={2}
                     name="Success %"
                   />
-                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <RechartsTooltip formatter={(v: number) => `${v.toFixed?.(1) ?? v}%`} />
                 </LineChart>
               </ResponsiveContainer>
-            </ChartContainer>
+            </div>
           </CardContent>
         </Card>
 
@@ -311,12 +314,7 @@ export function CronAnalytics() {
             <CardDescription>Types of errors encountered</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer
-              config={{
-                error: { label: "Error" },
-              }}
-              className="h-[300px]"
-            >
+            <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -325,16 +323,18 @@ export function CronAnalytics() {
                     cy="50%"
                     outerRadius={80}
                     dataKey="value"
-                    label={({ name, percent }) => `${name} ${((percent??0) * 100).toFixed(0)}%`}
+                    label={({ name, percent }) =>
+                      `${name} ${(((percent ?? 0) as number) * 100).toFixed(0)}%`
+                    }
                   >
                     {errorPie.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
-                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <RechartsTooltip />
                 </PieChart>
               </ResponsiveContainer>
-            </ChartContainer>
+            </div>
 
             {errorMsg && (
               <p className="text-sm text-red-600 mt-3">Failed to load data: {errorMsg}</p>
@@ -362,7 +362,7 @@ export function CronAnalytics() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(loading ? Array.from({ length: 5 }) : perfRows).map((row:any, idx) => {
+                {(loading ? Array.from({ length: 5 }) : perfRows).map((row: any, idx) => {
                   if (loading) {
                     return (
                       <TableRow key={`s-${idx}`}>
@@ -374,7 +374,7 @@ export function CronAnalytics() {
                       </TableRow>
                     )
                   }
-                  const successNum = parseFloat(row.success_rate.replace("%", "")) || 0
+                  const successNum = parseFloat(String(row.success_rate).replace("%", "")) || 0
                   return (
                     <TableRow key={row.job_name}>
                       <TableCell className="font-medium">{row.job_name}</TableCell>
@@ -389,7 +389,8 @@ export function CronAnalytics() {
                       <TableCell className="text-center">
                         <Badge
                           variant={
-                            successNum >= 95 ? "default" : successNum >= 90 ? "secondary" : "destructive"
+                            successNum >= 95 ? "default" :
+                            successNum >= 90 ? "secondary" : "destructive"
                           }
                         >
                           {successNum >= 95
@@ -410,3 +411,14 @@ export function CronAnalytics() {
     </div>
   )
 }
+
+/**
+ * Export BOTH default and named to be resilient to import styles.
+ * - Default export supports:   import CronAnalytics from "..."
+ * - Named export supports:     import { CronAnalytics } from "..."
+ */
+function CronAnalyticsWrapper() {
+  return <CronAnalyticsInner />
+}
+export default CronAnalyticsWrapper
+export { CronAnalyticsWrapper as CronAnalytics }

@@ -1,10 +1,13 @@
 "use client"
 
+import * as React from "react"
+
 import { OverviewDashboard } from "@/components/modules/overview-dashboard"
 import { AccountSummary } from "@/components/modules/account-summary"
 import { BillerManagement } from "@/components/modules/biller-management"
 import { CronMonitoring } from "@/components/modules/cron-monitoring"
-import { CronAnalytics } from "@/components/modules/cron-analytics"
+// ⬇️ FIX: use default import (no braces)
+import CronAnalytics from "@/components/modules/cron-analytics"
 import { ErrorAnalytics } from "@/components/modules/error-analytics"
 import { QueryTools } from "@/components/modules/query-tools"
 import { NotificationManagement } from "@/components/modules/notification-management"
