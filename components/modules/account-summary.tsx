@@ -1,52 +1,124 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Progress } from "@/components/ui/progress"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarIcon, Download, Search, TrendingUp, TrendingDown, Users, CheckCircle, Clock } from "lucide-react"
-import { format } from "date-fns"
-import type { DateRange } from "react-day-picker"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import {
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { Progress } from "@/components/ui/progress";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  CalendarIcon, Download, Search, TrendingUp, TrendingDown, Users, CheckCircle, Clock,
+} from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
+} from "recharts";
+import {
+  ChartContainer, ChartTooltip, ChartTooltipContent,
+} from "@/components/ui/chart";
 
-const billerData = [
-  { name: "HDFC Bank", attempted: 1250, fetched: 1188, successRate: 95.0, trend: "up" },
-  { name: "ICICI Bank", attempted: 1100, fetched: 1012, successRate: 92.0, trend: "up" },
-  { name: "SBI", attempted: 2100, fetched: 1848, successRate: 88.0, trend: "down" },
-  { name: "Axis Bank", attempted: 890, fetched: 837, successRate: 94.0, trend: "up" },
-  { name: "Kotak Bank", attempted: 750, fetched: 683, successRate: 91.1, trend: "stable" },
-  { name: "PNB", attempted: 650, fetched: 572, successRate: 88.0, trend: "down" },
-  { name: "BOI", attempted: 580, fetched: 510, successRate: 87.9, trend: "up" },
-  { name: "Canara Bank", attempted: 520, fetched: 468, successRate: 90.0, trend: "stable" },
-]
+/* ------------------------- Types matching API shape ------------------------- */
+type TrendPoint = { attempted: number; fetched: number };
+type Trends = Record<string, TrendPoint>;
+type PerformanceRow = {
+  billerId: string;
+  biller_name: string;
+  attempted: number;
+  fetched: number;
+  success_rate: string; // e.g. "92.4"
+  s: 0 | 1;
+};
+type BBPSInfoResponse = {
+  trends: Trends;
+  performance: PerformanceRow[];
+};
 
-const performanceData = [
-  { date: "Jan 1", attempted: 8500, fetched: 7650 },
-  { date: "Jan 2", attempted: 8200, fetched: 7544 },
-  { date: "Jan 3", attempted: 8800, fetched: 8096 },
-  { date: "Jan 4", attempted: 9100, fetched: 8281 },
-  { date: "Jan 5", attempted: 8900, fetched: 8188 },
-  { date: "Jan 6", attempted: 9200, fetched: 8464 },
-  { date: "Jan 7", attempted: 8700, fetched: 8004 },
-]
+/* ------------------------------ Data Fetching ------------------------------ */
+async function fetchBBPSInfo(payload: { startDate?: string; endDate?: string }) {
+  const res = await fetch("/api/bbps-info", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch bbps-info: ${res.status}`);
+  }
+  return (await res.json()) as BBPSInfoResponse;
+}
 
 export function AccountSummary() {
-  const [dateRange, setDateRange] = useState<DateRange | undefined>()
-  const [selectedBiller, setSelectedBiller] = useState<string>("all")
-  const [searchTerm, setSearchTerm] = useState("")
+  const [dateRange, setDateRange] = useState<DateRange | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<BBPSInfoResponse | null>(null);
 
-  const totalAttempted = billerData.reduce((sum, biller) => sum + biller.attempted, 0)
-  const totalFetched = billerData.reduce((sum, biller) => sum + biller.fetched, 0)
-  const overallSuccessRate = (totalFetched / totalAttempted) * 100
+  const [selectedBiller, setSelectedBiller] = useState<string>("all");
+  const [searchTerm, setSearchTerm] = useState("");
 
-  const filteredBillers = billerData.filter((biller) => biller.name.toLowerCase().includes(searchTerm.toLowerCase()))
+  // Build request payload (optional date range)
+  const payload = useMemo(() => {
+    const startDate = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : "";
+    const endDate = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : "";
+    return { startDate, endDate };
+  }, [dateRange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetchBBPSInfo(payload);
+        if (!cancelled) setData(res);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message ?? "Unknown error");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [payload]);
+
+  // Convert trends object -> chart array sorted by date
+  const trendSeries = useMemo(() => {
+    if (!data?.trends) return [];
+    return Object.entries(data.trends)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([date, v]) => ({ date, attempted: v.attempted, fetched: v.fetched }));
+  }, [data]);
+
+  const billerRows = useMemo(() => {
+    if (!data?.performance) return [];
+    const filtered = data.performance.filter((b) =>
+      b.biller_name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    if (selectedBiller !== "all") {
+      return filtered.filter((b) => b.biller_name === selectedBiller);
+    }
+    return filtered;
+  }, [data, searchTerm, selectedBiller]);
+
+  // Cards: aggregate
+  const { totalAttempted, totalFetched, overallSuccessRate } = useMemo(() => {
+    const attempted = billerRows.reduce((s, r) => s + r.attempted, 0);
+    const fetched = billerRows.reduce((s, r) => s + r.fetched, 0);
+    const rate = attempted > 0 ? (fetched / attempted) * 100 : 0;
+    return { totalAttempted: attempted, totalFetched: fetched, overallSuccessRate: rate };
+  }, [billerRows]);
 
   return (
     <div className="p-6 space-y-6">
@@ -84,7 +156,23 @@ export function AccountSummary() {
               />
             </PopoverContent>
           </Popover>
-          <Button variant="outline">
+
+          <Button
+            variant="outline"
+            onClick={() => {
+              // quick export of current JSON
+              const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "bbps-info.json";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            disabled={!data}
+          >
             <Download className="w-4 h-4 mr-2" />
             Export
           </Button>
@@ -99,10 +187,13 @@ export function AccountSummary() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalAttempted.toLocaleString()}</div>
+            <div className="text-2xl font-bold">
+              {loading ? "…" : totalAttempted.toLocaleString()}
+            </div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +8.2% from yesterday
+              {/* placeholder delta; replace if backend provides deltas */}
+              Based on selected range
             </div>
           </CardContent>
         </Card>
@@ -113,10 +204,12 @@ export function AccountSummary() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalFetched.toLocaleString()}</div>
+            <div className="text-2xl font-bold">
+              {loading ? "…" : totalFetched.toLocaleString()}
+            </div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +9.1% from yesterday
+              Based on selected range
             </div>
           </CardContent>
         </Card>
@@ -127,11 +220,13 @@ export function AccountSummary() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{overallSuccessRate.toFixed(1)}%</div>
+            <div className="text-2xl font-bold">
+              {loading ? "…" : `${overallSuccessRate.toFixed(1)}%`}
+            </div>
             <Progress value={overallSuccessRate} className="mt-2" />
             <div className="flex items-center text-xs text-muted-foreground mt-1">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +1.2% from yesterday
+              Higher is better
             </div>
           </CardContent>
         </Card>
@@ -142,10 +237,10 @@ export function AccountSummary() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{billerData.length}</div>
+            <div className="text-2xl font-bold">{loading ? "…" : billerRows.length}</div>
             <div className="flex items-center text-xs text-muted-foreground">
               <CheckCircle className="w-3 h-3 mr-1 text-green-500" />
-              All operational
+              Based on current table
             </div>
           </CardContent>
         </Card>
@@ -160,19 +255,13 @@ export function AccountSummary() {
         <CardContent>
           <ChartContainer
             config={{
-              attempted: {
-                label: "Attempted",
-                color: "hsl(var(--chart-1))",
-              },
-              fetched: {
-                label: "Fetched",
-                color: "hsl(var(--chart-2))",
-              },
+              attempted: { label: "Attempted", color: "hsl(var(--chart-1))" },
+              fetched: { label: "Fetched", color: "hsl(var(--chart-2))" },
             }}
             className="h-[300px]"
           >
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={performanceData}>
+              <LineChart data={trendSeries}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis />
@@ -182,6 +271,7 @@ export function AccountSummary() {
               </LineChart>
             </ResponsiveContainer>
           </ChartContainer>
+          {error && <p className="text-sm text-red-600 mt-3">Error: {error}</p>}
         </CardContent>
       </Card>
 
@@ -201,20 +291,21 @@ export function AccountSummary() {
               />
             </div>
             <Select value={selectedBiller} onValueChange={setSelectedBiller}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-[220px]">
                 <SelectValue placeholder="Select biller" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Billers</SelectItem>
-                {billerData.map((biller) => (
-                  <SelectItem key={biller.name} value={biller.name}>
-                    {biller.name}
+                {(data?.performance ?? []).map((b) => (
+                  <SelectItem key={b.billerId} value={b.biller_name}>
+                    {b.biller_name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
         </CardHeader>
+
         <CardContent>
           <Table>
             <TableHeader>
@@ -228,33 +319,44 @@ export function AccountSummary() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredBillers.map((biller) => (
-                <TableRow key={biller.name}>
-                  <TableCell className="font-medium">{biller.name}</TableCell>
-                  <TableCell className="text-right">{biller.attempted.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">{biller.fetched.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end space-x-2">
-                      <span className="font-medium">{biller.successRate.toFixed(1)}%</span>
-                      <Progress value={biller.successRate} className="w-16" />
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {biller.trend === "up" && <TrendingUp className="h-4 w-4 text-green-500 mx-auto" />}
-                    {biller.trend === "down" && <TrendingDown className="h-4 w-4 text-red-500 mx-auto" />}
-                    {biller.trend === "stable" && <div className="w-4 h-4 bg-gray-300 rounded-full mx-auto" />}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={biller.successRate >= 90 ? "default" : "secondary"}>
-                      {biller.successRate >= 90 ? "Healthy" : "Needs Attention"}
-                    </Badge>
+              {billerRows.map((b) => {
+                const success = parseFloat(b.success_rate || "0");
+                const trend = b.s === 1 ? "up" : success < 90 ? "down" : "stable";
+                return (
+                  <TableRow key={b.billerId}>
+                    <TableCell className="font-medium">{b.biller_name}</TableCell>
+                    <TableCell className="text-right">{b.attempted.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">{b.fetched.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end space-x-2">
+                        <span className="font-medium">{success.toFixed(1)}%</span>
+                        <Progress value={success} className="w-16" />
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {trend === "up" && <TrendingUp className="h-4 w-4 text-green-500 mx-auto" />}
+                      {trend === "down" && <TrendingDown className="h-4 w-4 text-red-500 mx-auto" />}
+                      {trend === "stable" && <div className="w-4 h-4 bg-gray-300 rounded-full mx-auto" />}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant={success >= 90 ? "default" : "secondary"}>
+                        {success >= 90 ? "Healthy" : "Needs Attention"}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {!loading && billerRows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
+                    No billers found for the applied filters.
                   </TableCell>
                 </TableRow>
-              ))}
+              )}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }
