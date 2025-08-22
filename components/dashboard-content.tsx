@@ -6,7 +6,7 @@ import { OverviewDashboard } from "@/components/modules/overview-dashboard"
 import { AccountSummary } from "@/components/modules/account-summary"
 import { BillerManagement } from "@/components/modules/biller-management"
 import { CronMonitoring } from "@/components/modules/cron-monitoring"
-// ⬇️ FIX: use default import (no braces)
+// ⬇️ Default import for CronAnalytics (no braces)
 import CronAnalytics from "@/components/modules/cron-analytics"
 import { ErrorAnalytics } from "@/components/modules/error-analytics"
 import { QueryTools } from "@/components/modules/query-tools"

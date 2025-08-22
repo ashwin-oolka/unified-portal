@@ -1,89 +1,102 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-/**
- * Proxies to your upstream `bbps-info` service.
- * Configure one of these env vars:
- *  - NEXT_PUBLIC_API_BASE      e.g. https://api.yourdomain.com
- *  - API_BASE                  (server-only alternative)
- * Optionally set:
- *  - API_TOKEN                 e.g. a Bearer token
- */
-function getApiBase() {
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE ||
-    process.env.API_BASE;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-  if (!base) {
-    throw new Error(
-      "Missing API base. Set NEXT_PUBLIC_API_BASE or API_BASE in env."
-    );
-  }
-  return base.replace(/\/+$/, "");
-}
+const UPSTREAM = "https://staging-v2.oolka.in/v2/ops/bbps-info";
 
-type BBPSInfoRequest = {
-  startDate?: string; // ISO yyyy-mm-dd
-  endDate?: string;   // ISO yyyy-mm-dd
+type BodyIn = {
+  startDate?: string;
+  endDate?: string;
 };
 
-export async function GET(req: NextRequest) {
-  // Also support GET with ?startDate=&endDate=
-  const { searchParams } = new URL(req.url);
-  const startDate = searchParams.get("startDate") ?? "";
-  const endDate = searchParams.get("endDate") ?? "";
-  return proxy({ startDate, endDate });
+function isYMD(s?: string) {
+  if (!s) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-export async function POST(req: NextRequest) {
-  let body: BBPSInfoRequest = {};
-  try {
-    body = await req.json();
-  } catch {
-    // empty body is fine
-  }
-  return proxy({
-    startDate: body.startDate ?? "",
-    endDate: body.endDate ?? "",
-  });
+function formatYMD(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-async function proxy(payload: BBPSInfoRequest) {
+/**
+ * If either date is missing/invalid, default to last 7 days (inclusive).
+ * Ensures we always send strings that the upstream can strptime.
+ */
+function normalizeDates(body?: BodyIn): { startDate: string; endDate: string } {
+  const today = new Date(); // UTC is fine for daily rollups
+  const end = isYMD(body?.endDate) ? body!.endDate! : formatYMD(today);
+
+  // last 7 days window (including today)
+  const d7 = new Date(today);
+  d7.setUTCDate(today.getUTCDate() - 6);
+  const fallbackStart = formatYMD(d7);
+
+  const start = isYMD(body?.startDate) ? body!.startDate! : fallbackStart;
+
+  // if caller sent only one valid date, keep it and fill the other with sensible default
+  return { startDate: start, endDate: end };
+}
+
+export async function POST(req: Request) {
   try {
-    const base = getApiBase();
-    const url = `${base}/bbps-info`;
+    const inBody = (await req.json().catch(() => ({}))) as BodyIn;
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (process.env.API_TOKEN) {
-      headers.Authorization = `Bearer ${process.env.API_TOKEN}`;
-    }
+    // Always send concrete strings; upstream fails on null/None.
+    const { startDate, endDate } = normalizeDates(inBody);
 
-    const upstream = await fetch(url, {
+    const upstreamBody: Record<string, string> = { startDate, endDate };
+
+    const res = await fetch(UPSTREAM, {
       method: "POST",
-      headers,
-      body: JSON.stringify({
-        startDate: payload.startDate ?? "",
-        endDate: payload.endDate ?? "",
-      }),
-      // Important for server-to-server calls
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        // If auth is required, uncomment:
+        // Authorization: `Bearer ${process.env.OOLKA_API_TOKEN ?? ""}`,
+      },
+      body: JSON.stringify(upstreamBody),
       cache: "no-store",
     });
 
-    if (!upstream.ok) {
-      const errText = await upstream.text();
+    const text = await res.text();
+    let payload: any = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      /* leave as text */
+    }
+
+    if (!res.ok) {
       return NextResponse.json(
-        { error: "Upstream error", status: upstream.status, details: errText },
-        { status: 502 }
+        {
+          error: `Upstream error ${res.status}`,
+          details: payload ?? text ?? null,
+          sent: upstreamBody,
+        },
+        { status: 502 },
       );
     }
 
-    const data = await upstream.json();
-    return NextResponse.json(data, { status: 200 });
+    // Pass upstream json through unchanged
+    return NextResponse.json(payload ?? {});
   } catch (err: any) {
     return NextResponse.json(
-      { error: "Proxy failed", details: err?.message ?? String(err) },
-      { status: 500 }
+      {
+        error: "Internal server error",
+        details: err?.message ?? String(err),
+      },
+      { status: 500 },
     );
   }
+}
+
+export async function GET() {
+  return NextResponse.json(
+    { error: "Method Not Allowed", details: "Use POST /api/bbps-info" },
+    { status: 405, headers: { Allow: "POST" } },
+  );
 }
