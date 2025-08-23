@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -18,106 +18,122 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Search, Play, Pause, RotateCcw, Clock, CheckCircle, XCircle, AlertTriangle, Activity, Zap } from "lucide-react"
 
-const cronJobs = [
-  {
-    id: 1,
-    name: "HDFC Bill Fetch",
-    schedule: "0 */6 * * *",
-    status: "running",
-    lastRun: "2024-01-15 14:00:00",
-    nextRun: "2024-01-15 20:00:00",
-    duration: "2m 34s",
-    success: true,
-    processed: 1245,
-    errors: 12,
-  },
-  {
-    id: 2,
-    name: "ICICI Bill Fetch",
-    schedule: "0 */4 * * *",
-    status: "running",
-    lastRun: "2024-01-15 16:00:00",
-    nextRun: "2024-01-15 20:00:00",
-    duration: "1m 56s",
-    success: true,
-    processed: 1012,
-    errors: 8,
-  },
-  {
-    id: 3,
-    name: "SBI Bill Fetch",
-    schedule: "0 */8 * * *",
-    status: "failed",
-    lastRun: "2024-01-15 12:00:00",
-    nextRun: "2024-01-15 20:00:00",
-    duration: "5m 12s",
-    success: false,
-    processed: 1848,
-    errors: 156,
-  },
-  {
-    id: 4,
-    name: "Notification Sender",
-    schedule: "0 9,18 * * *",
-    status: "running",
-    lastRun: "2024-01-15 18:00:00",
-    nextRun: "2024-01-16 09:00:00",
-    duration: "45s",
-    success: true,
-    processed: 2156,
-    errors: 3,
-  },
-  {
-    id: 5,
-    name: "WhatsApp Campaign",
-    schedule: "0 10 * * *",
-    status: "paused",
-    lastRun: "2024-01-14 10:00:00",
-    nextRun: "Paused",
-    duration: "1m 23s",
-    success: true,
-    processed: 892,
-    errors: 0,
-  },
-]
+/* ---------- types ---------- */
+type ApiJob = {
+  name?: string
+  job_name?: string
+  status: 0 | 1
+  rate?: { success?: number; failed?: number }
+  schedule?: string
+  last_run?: string
+  next_run?: string
+  duration?: string
+}
+
+type CronStatus = "running" | "failed" | "paused" | "scheduled"
+
+type Row = {
+  id: string
+  name: string
+  schedule: string
+  status: CronStatus
+  lastRun: string
+  nextRun: string
+  duration: string
+  processed: number
+  errors: number
+  success: boolean
+}
+
+/* ---------- helpers ---------- */
+function normalize(payload: any): Row[] {
+  const jobs: ApiJob[] = payload?.response?.jobs ?? payload?.jobs ?? []
+  return jobs.map((j: ApiJob, i: number): Row => {
+    const name = j.name ?? j.job_name ?? `Job ${i + 1}`
+    const status: CronStatus = j.status === 1 ? "running" : "failed"
+    const processed = j.rate?.success ?? 0
+    const errors = j.rate?.failed ?? 0
+    return {
+      id: `${name}-${i}`,
+      name,
+      schedule: j.schedule ?? "-",
+      status,
+      lastRun: j.last_run ?? "-",
+      nextRun: j.next_run ?? "-",
+      duration: j.duration ?? "-",
+      processed,
+      errors,
+      success: status === "running",
+    }
+  })
+}
 
 export function CronMonitoring() {
+  const [rows, setRows] = useState<Row[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   const [searchTerm, setSearchTerm] = useState("")
-  const [statusFilter, setStatusFilter] = useState("all")
-  const [selectedCron, setSelectedCron] = useState<any>(null)
+  const [statusFilter, setStatusFilter] = useState<"all" | CronStatus>("all")
+
+  const [selectedCron, setSelectedCron] = useState<Row | null>(null)
   const [isExecuteDialogOpen, setIsExecuteDialogOpen] = useState(false)
 
-  const filteredCrons = cronJobs.filter((cron) => {
-    const matchesSearch = cron.name.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesStatus = statusFilter === "all" || cron.status === statusFilter
-    return matchesSearch && matchesStatus
-  })
-
-  const handleManualExecute = (cron: any) => {
-    setSelectedCron(cron)
-    setIsExecuteDialogOpen(true)
+  const fetchData = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      // IMPORTANT: use /api/... since this is an API route
+      const res = await fetch("/api/crons-info", { cache: "no-store" })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setRows(normalize(data))
+    } catch (e: any) {
+      setError("Could not reach /api/crons-info.")
+      setRows([]) // or keep previous data
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const getStatusIcon = (status: string, success: boolean) => {
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  const filtered = useMemo(() => {
+    const s = searchTerm.toLowerCase()
+    return rows.filter(r => {
+      const matchS = !s || r.name.toLowerCase().includes(s)
+      const matchF = statusFilter === "all" || r.status === statusFilter
+      return matchS && matchF
+    })
+  }, [rows, searchTerm, statusFilter])
+
+  const totals = useMemo(() => {
+    const total = rows.length
+    const running = rows.filter(r => r.status === "running").length
+    const failed = rows.filter(r => r.status === "failed").length
+    const succ = rows.reduce((a, r) => a + r.processed, 0)
+    const err = rows.reduce((a, r) => a + r.errors, 0)
+    const rate = succ + err ? (succ / (succ + err)) * 100 : 0
+    return { total, running, failed, rate }
+  }, [rows])
+
+  const getStatusIcon = (status: CronStatus) => {
     if (status === "running") return <CheckCircle className="w-4 h-4 text-green-500" />
     if (status === "failed") return <XCircle className="w-4 h-4 text-red-500" />
     if (status === "paused") return <Pause className="w-4 h-4 text-yellow-500" />
     return <Clock className="w-4 h-4 text-gray-500" />
   }
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: CronStatus) => {
     const variants = {
       running: "default",
       failed: "destructive",
       paused: "secondary",
       scheduled: "outline",
     } as const
-
-    return (
-      <Badge variant={variants[status as keyof typeof variants] || "outline"}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </Badge>
-    )
+    return <Badge variant={variants[status] || "outline"}>{status[0].toUpperCase() + status.slice(1)}</Badge>
   }
 
   return (
@@ -130,16 +146,23 @@ export function CronMonitoring() {
         <div className="flex items-center space-x-3">
           <Badge variant="outline" className="text-green-700 border-green-200 bg-green-50">
             <Activity className="w-3 h-3 mr-1" />
-            {cronJobs.filter((c) => c.status === "running").length} Active
+            {totals.running} Active
           </Badge>
-          <Button variant="outline">
+          <Button variant="outline" onClick={fetchData} disabled={loading}>
             <RotateCcw className="w-4 h-4 mr-2" />
-            Refresh
+            {loading ? "Refreshing..." : "Refresh"}
           </Button>
         </div>
       </div>
 
-      {/* Status Overview */}
+      {error && (
+        <Alert className="border-amber-200 bg-amber-50">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="text-sm">{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Overview cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -147,7 +170,7 @@ export function CronMonitoring() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{cronJobs.length}</div>
+            <div className="text-2xl font-bold">{totals.total}</div>
             <p className="text-xs text-muted-foreground">Scheduled cron jobs</p>
           </CardContent>
         </Card>
@@ -158,9 +181,7 @@ export function CronMonitoring() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              {cronJobs.filter((c) => c.status === "running").length}
-            </div>
+            <div className="text-2xl font-bold text-green-600">{totals.running}</div>
             <p className="text-xs text-muted-foreground">Active executions</p>
           </CardContent>
         </Card>
@@ -171,9 +192,7 @@ export function CronMonitoring() {
             <XCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">
-              {cronJobs.filter((c) => c.status === "failed").length}
-            </div>
+            <div className="text-2xl font-bold text-red-600">{totals.failed}</div>
             <p className="text-xs text-muted-foreground">Need attention</p>
           </CardContent>
         </Card>
@@ -184,22 +203,20 @@ export function CronMonitoring() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {((cronJobs.filter((c) => c.success).length / cronJobs.length) * 100).toFixed(1)}%
-            </div>
+            <div className="text-2xl font-bold">{totals.rate.toFixed(1)}%</div>
             <p className="text-xs text-muted-foreground">Last 24 hours</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Cron Jobs Table */}
+      {/* Table */}
       <Card>
         <CardHeader>
           <CardTitle>Cron Jobs</CardTitle>
           <CardDescription>Monitor and control scheduled tasks</CardDescription>
           <div className="flex items-center space-x-4 mt-4">
             <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-4 w-4" />
               <Input
                 placeholder="Search cron jobs..."
                 value={searchTerm}
@@ -207,7 +224,7 @@ export function CronMonitoring() {
                 className="pl-10"
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
@@ -235,11 +252,11 @@ export function CronMonitoring() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredCrons.map((cron) => (
+              {filtered.map((cron) => (
                 <TableRow key={cron.id}>
                   <TableCell className="font-medium">
                     <div className="flex items-center space-x-2">
-                      {getStatusIcon(cron.status, cron.success)}
+                      {getStatusIcon(cron.status)}
                       <span>{cron.name}</span>
                     </div>
                   </TableCell>
@@ -262,7 +279,7 @@ export function CronMonitoring() {
                   </TableCell>
                   <TableCell className="text-center">
                     <div className="flex items-center justify-center space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => handleManualExecute(cron)}>
+                      <Button variant="outline" size="sm" onClick={() => { setSelectedCron(cron); setIsExecuteDialogOpen(true) }}>
                         <Play className="w-3 h-3" />
                       </Button>
                       <Button variant="outline" size="sm">
@@ -272,6 +289,13 @@ export function CronMonitoring() {
                   </TableCell>
                 </TableRow>
               ))}
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-sm text-gray-500 py-8">
+                    {loading ? "Loading jobs…" : "No cron jobs found."}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -288,8 +312,7 @@ export function CronMonitoring() {
           <Alert>
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
-              This will trigger the cron job immediately. The job will process all pending accounts and may take several
-              minutes to complete. Are you sure you want to proceed?
+              This will trigger the cron job immediately and may take a few minutes to complete.
             </AlertDescription>
           </Alert>
 
@@ -310,8 +333,8 @@ export function CronMonitoring() {
                 <span>{selectedCron.duration}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Expected Processing:</span>
-                <span>~{selectedCron.processed} accounts</span>
+                <span className="text-gray-600">Last Results:</span>
+                <span>✓ {selectedCron.processed} / ✗ {selectedCron.errors}</span>
               </div>
             </div>
           )}
@@ -320,12 +343,7 @@ export function CronMonitoring() {
             <Button variant="outline" onClick={() => setIsExecuteDialogOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={() => {
-                // Handle manual execution logic here
-                setIsExecuteDialogOpen(false)
-              }}
-            >
+            <Button onClick={() => setIsExecuteDialogOpen(false)}>
               <Zap className="w-4 h-4 mr-2" />
               Execute Now
             </Button>

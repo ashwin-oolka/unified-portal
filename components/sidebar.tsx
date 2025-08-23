@@ -4,11 +4,15 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Clock, AlertTriangle, Bell, Activity, Database, Users, Home, Zap } from "lucide-react"
+import { useSession } from "next-auth/react"
+import { useMemo } from "react"
 
 interface SidebarProps {
   activeModule: string
   onModuleChange: (module: string) => void
 }
+
+const ADMIN_EMAILS = ["avnii.k02@gmail.com"] as const
 
 const menuItems = [
   {
@@ -70,6 +74,14 @@ const menuItems = [
 ]
 
 export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
+  const { data: session } = useSession()
+
+  const { role, isAdmin, email } = useMemo(() => {
+    const email = session?.user?.email ?? ""
+    const isAdmin = ADMIN_EMAILS.includes(email as (typeof ADMIN_EMAILS)[number])
+    return { role: isAdmin ? "Admin Access" : "User Access", isAdmin, email }
+  }, [session?.user?.email])
+
   return (
     <div className="w-64 bg-white border-r border-gray-200 flex flex-col">
       <div className="p-6 border-b border-gray-200">
@@ -125,12 +137,12 @@ export function Sidebar({ activeModule, onModuleChange }: SidebarProps) {
 
       <div className="p-4 border-t border-gray-200">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-            <Users className="w-4 h-4 text-gray-600" />
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isAdmin ? "bg-green-100" : "bg-gray-200"}`}>
+            <Users className={`w-4 h-4 ${isAdmin ? "text-green-700" : "text-gray-600"}`} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">Operations Team</p>
-            <p className="text-xs text-gray-500 truncate">Admin Access</p>
+            <p className="text-sm font-medium text-gray-900 truncate">{email || "Not signed in"}</p>
+            <p className={`text-xs truncate ${isAdmin ? "text-green-700" : "text-gray-600"}`}>{role}</p>
           </div>
         </div>
       </div>
