@@ -1,111 +1,99 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Progress } from "@/components/ui/progress"
-import {
-  Shield,
-  Clock,
-  CheckCircle,
-  XCircle,
-  TrendingUp,
-  TrendingDown,
-  AlertTriangle,
-  RefreshCw,
-  Eye,
-} from "lucide-react"
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { useEffect, useMemo, useState } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Progress } from "@/components/ui/progress";
+import { Shield, Clock, CheckCircle, XCircle, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, Eye } from "lucide-react";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 
-const unmaskingData = [
-  { date: "Jan 1", requests: 450, successful: 432, failed: 18, avgTime: 1.2 },
-  { date: "Jan 2", requests: 523, successful: 498, failed: 25, avgTime: 1.4 },
-  { date: "Jan 3", requests: 389, successful: 375, failed: 14, avgTime: 1.1 },
-  { date: "Jan 4", requests: 612, successful: 587, failed: 25, avgTime: 1.3 },
-  { date: "Jan 5", requests: 478, successful: 461, failed: 17, avgTime: 1.0 },
-  { date: "Jan 6", requests: 534, successful: 512, failed: 22, avgTime: 1.2 },
-  { date: "Jan 7", requests: 467, successful: 449, failed: 18, avgTime: 1.1 },
-]
+type ApiShape = {
+  request: { startDate: string; endDate: string };
+  response: {
+    rate: Record<string, { success: number; freq: number }>;
+    avgResponseTimeToday: Record<string, number>;
+  };
+};
 
-const responseTimeData = [
-  { hour: "00:00", avgTime: 0.9, p95Time: 2.1 },
-  { hour: "04:00", avgTime: 0.8, p95Time: 1.8 },
-  { hour: "08:00", avgTime: 1.2, p95Time: 2.8 },
-  { hour: "12:00", avgTime: 1.4, p95Time: 3.2 },
-  { hour: "16:00", avgTime: 1.3, p95Time: 2.9 },
-  { hour: "20:00", avgTime: 1.1, p95Time: 2.4 },
-]
-
-const recentRequests = [
-  {
-    id: 1,
-    timestamp: "2024-01-15 16:45:23",
-    accountNumber: "****7890",
-    biller: "HDFC Bank",
-    status: "success",
-    responseTime: "1.2s",
-    verificationStatus: "verified",
-  },
-  {
-    id: 2,
-    timestamp: "2024-01-15 16:44:15",
-    accountNumber: "****4321",
-    biller: "ICICI Bank",
-    status: "success",
-    responseTime: "0.9s",
-    verificationStatus: "verified",
-  },
-  {
-    id: 3,
-    timestamp: "2024-01-15 16:43:07",
-    accountNumber: "****1234",
-    biller: "SBI",
-    status: "failed",
-    responseTime: "3.1s",
-    verificationStatus: "failed",
-  },
-  {
-    id: 4,
-    timestamp: "2024-01-15 16:42:12",
-    accountNumber: "****9876",
-    biller: "Axis Bank",
-    status: "success",
-    responseTime: "1.1s",
-    verificationStatus: "verified",
-  },
-]
+type DayRow = { date: string; requests: number; successful: number; failed: number };
+type HourRow = { hour: string; avgTime: number };
 
 export function CRIFIntegration() {
-  const totalRequests = unmaskingData.reduce((sum, day) => sum + day.requests, 0)
-  const totalSuccessful = unmaskingData.reduce((sum, day) => sum + day.successful, 0)
-  const successRate = (totalSuccessful / totalRequests) * 100
-  const avgResponseTime = unmaskingData.reduce((sum, day) => sum + day.avgTime, 0) / unmaskingData.length
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [data, setData] = useState<ApiShape["response"] | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const getStatusIcon = (status: string) => {
-    return status === "success" ? (
-      <CheckCircle className="w-4 h-4 text-green-500" />
-    ) : (
-      <XCircle className="w-4 h-4 text-red-500" />
-    )
+  async function fetchData(dates?: { startDate?: string; endDate?: string }) {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/equifax-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startDate: dates?.startDate || startDate || undefined,
+          endDate: dates?.endDate || endDate || undefined,
+        }),
+      });
+      const json: ApiShape = await res.json();
+      if (!res.ok) throw new Error(json as any);
+      setData(json.response);
+    } catch (e: any) {
+      setErr(typeof e?.message === "string" ? e.message : "Failed to load data");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const getStatusBadge = (status: string) => {
-    return (
-      <Badge variant={status === "success" ? "default" : "destructive"}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </Badge>
-    )
-  }
+  useEffect(() => {
+    // Initial load without dates
+    fetchData({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const getVerificationBadge = (status: string) => {
-    return (
-      <Badge variant={status === "verified" ? "default" : "destructive"}>
-        {status === "verified" ? "Verified" : "Failed"}
-      </Badge>
-    )
-  }
+  const daySeries: DayRow[] = useMemo(() => {
+    if (!data?.rate) return [];
+    return Object.entries(data.rate)
+      .sort(([a], [b]) => (a > b ? 1 : -1))
+      .map(([date, v]) => ({
+        date,
+        requests: Number(v?.freq ?? 0),
+        successful: Number(v?.success ?? 0),
+        failed: Math.max(0, Number(v?.freq ?? 0) - Number(v?.success ?? 0)),
+      }));
+  }, [data]);
+
+  const hourSeries: HourRow[] = useMemo(() => {
+    if (!data?.avgResponseTimeToday) return [];
+    return Object.entries(data.avgResponseTimeToday)
+      .sort(([a], [b]) => (a > b ? 1 : -1))
+      .map(([hour, val]) => ({ hour, avgTime: Number(val ?? 0) }));
+  }, [data]);
+
+  const totals = useMemo(() => {
+    const totalRequests = daySeries.reduce((s, d) => s + d.requests, 0);
+    const totalSuccess = daySeries.reduce((s, d) => s + d.successful, 0);
+    const successRate = totalRequests ? (totalSuccess / totalRequests) * 100 : 0;
+    const avgResponseTime =
+      hourSeries.length ? hourSeries.reduce((s, h) => s + h.avgTime, 0) / hourSeries.length : 0;
+    const totalFailed = daySeries.reduce((s, d) => s + d.failed, 0);
+    return { totalRequests, totalSuccess, successRate, avgResponseTime, totalFailed };
+  }, [daySeries, hourSeries]);
+
+  const getStatusIcon = (status: "success" | "failed") =>
+    status === "success" ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-500" />;
+
+  const getStatusBadge = (status: "success" | "failed") => (
+    <Badge variant={status === "success" ? "default" : "destructive"}>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </Badge>
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -119,11 +107,41 @@ export function CRIFIntegration() {
             <Shield className="w-3 h-3 mr-1" />
             API Healthy
           </Badge>
-          <Button variant="outline">
+          <Button
+            variant="outline"
+            onClick={() => fetchData({ startDate, endDate })}
+            disabled={loading}
+          >
             <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+            {loading ? "Loading..." : "Refresh"}
           </Button>
         </div>
+      </div>
+
+      {/* Date filters */}
+      <div className="flex items-end gap-3">
+        <div className="flex flex-col">
+          <label className="text-xs text-muted-foreground mb-1">Start date (YYYY-MM-DD)</label>
+          <input
+            className="border rounded-md px-3 py-2 text-sm"
+            placeholder="YYYY-MM-DD"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-xs text-muted-foreground mb-1">End date (YYYY-MM-DD)</label>
+          <input
+            className="border rounded-md px-3 py-2 text-sm"
+            placeholder="YYYY-MM-DD"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+          />
+        </div>
+        <Button onClick={() => fetchData({ startDate, endDate })} disabled={loading}>
+          Apply
+        </Button>
+        {err ? <span className="text-xs text-red-600">{err}</span> : null}
       </div>
 
       {/* Overview Metrics */}
@@ -134,10 +152,10 @@ export function CRIFIntegration() {
             <Shield className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalRequests.toLocaleString()}</div>
+            <div className="text-2xl font-bold">{totals.totalRequests.toLocaleString()}</div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +8.2% from last week
+              Live period
             </div>
           </CardContent>
         </Card>
@@ -148,11 +166,11 @@ export function CRIFIntegration() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{successRate.toFixed(1)}%</div>
-            <Progress value={successRate} className="mt-2" />
+            <div className="text-2xl font-bold">{totals.successRate.toFixed(1)}%</div>
+            <Progress value={totals.successRate} className="mt-2" />
             <div className="flex items-center text-xs text-muted-foreground mt-1">
               <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              +1.2% improvement
+              Computed from current data
             </div>
           </CardContent>
         </Card>
@@ -163,10 +181,10 @@ export function CRIFIntegration() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{avgResponseTime.toFixed(1)}s</div>
+            <div className="text-2xl font-bold">{totals.avgResponseTime.toFixed(2)}s</div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingDown className="w-3 h-3 mr-1 text-green-500" />
-              -0.2s faster
+              Lower is better
             </div>
           </CardContent>
         </Card>
@@ -178,11 +196,11 @@ export function CRIFIntegration() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {unmaskingData.reduce((sum, day) => sum + day.failed, 0)}
+              {daySeries.reduce((s, d) => s + d.failed, 0)}
             </div>
             <div className="flex items-center text-xs text-muted-foreground">
               <TrendingDown className="w-3 h-3 mr-1 text-green-500" />
-              -12 from last week
+              Computed from freq - success
             </div>
           </CardContent>
         </Card>
@@ -198,23 +216,13 @@ export function CRIFIntegration() {
           <CardContent>
             <ChartContainer
               config={{
-                requests: {
-                  label: "Total Requests",
-                  color: "hsl(var(--chart-1))",
-                },
-                successful: {
-                  label: "Successful",
-                  color: "hsl(var(--chart-2))",
-                },
-                failed: {
-                  label: "Failed",
-                  color: "hsl(var(--chart-3))",
-                },
+                successful: { label: "Successful", color: "hsl(var(--chart-2))" },
+                failed: { label: "Failed", color: "hsl(var(--chart-3))" },
               }}
               className="h-[300px]"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={unmaskingData}>
+                <BarChart data={daySeries}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
                   <YAxis />
@@ -235,31 +243,17 @@ export function CRIFIntegration() {
           <CardContent>
             <ChartContainer
               config={{
-                avgTime: {
-                  label: "Average Time",
-                  color: "hsl(var(--chart-1))",
-                },
-                p95Time: {
-                  label: "95th Percentile",
-                  color: "hsl(var(--chart-2))",
-                },
+                avgTime: { label: "Average Time", color: "hsl(var(--chart-1))" },
               }}
               className="h-[300px]"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={responseTimeData}>
+                <LineChart data={hourSeries}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="hour" />
                   <YAxis />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Line type="monotone" dataKey="avgTime" stroke="var(--color-avgTime)" strokeWidth={2} />
-                  <Line
-                    type="monotone"
-                    dataKey="p95Time"
-                    stroke="var(--color-p95Time)"
-                    strokeWidth={2}
-                    strokeDasharray="5 5"
-                  />
                 </LineChart>
               </ResponsiveContainer>
             </ChartContainer>
@@ -267,63 +261,53 @@ export function CRIFIntegration() {
         </Card>
       </div>
 
-      {/* Recent Requests */}
+      {/* Recent Requests (synthetic from daily buckets; if you later have per-request logs, replace this) */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Unmasking Requests</CardTitle>
-          <CardDescription>Latest account verification attempts</CardDescription>
+          <CardTitle>Recent Unmasking Buckets</CardTitle>
+          <CardDescription>Rollup computed from daily stats</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Timestamp</TableHead>
-                <TableHead>Account</TableHead>
-                <TableHead>Biller</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Total</TableHead>
+                <TableHead>Success</TableHead>
+                <TableHead>Failed</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Response Time</TableHead>
-                <TableHead>Verification</TableHead>
                 <TableHead className="text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {recentRequests.map((request) => (
-                <TableRow key={request.id}>
-                  <TableCell className="text-sm text-gray-600">{request.timestamp}</TableCell>
-                  <TableCell className="font-mono">{request.accountNumber}</TableCell>
-                  <TableCell className="font-medium">{request.biller}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center space-x-2">
-                      {getStatusIcon(request.status)}
-                      {getStatusBadge(request.status)}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={
-                        Number.parseFloat(request.responseTime) > 2
-                          ? "border-red-200 text-red-700"
-                          : "border-green-200 text-green-700"
-                      }
-                    >
-                      {request.responseTime}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{getVerificationBadge(request.verificationStatus)}</TableCell>
-                  <TableCell className="text-center">
-                    <Button variant="outline" size="sm">
-                      <Eye className="w-3 h-3" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {daySeries.slice(-10).map((d) => {
+                const status: "success" | "failed" = d.failed > 0 && d.successful < d.requests ? "failed" : "success";
+                return (
+                  <TableRow key={d.date}>
+                    <TableCell className="text-sm text-gray-600">{d.date}</TableCell>
+                    <TableCell className="font-medium">{d.requests}</TableCell>
+                    <TableCell className="font-medium">{d.successful}</TableCell>
+                    <TableCell className="font-medium">{d.failed}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center space-x-2">
+                        {getStatusIcon(status)}
+                        {getStatusBadge(status)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Button variant="outline" size="sm">
+                        <Eye className="w-3 h-3" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
 
-      {/* API Health Status */}
+      {/* API Health Status (static scaffolding – keep for UX) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -342,16 +326,18 @@ export function CRIFIntegration() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Average Response Time</span>
               <div className="flex items-center space-x-2">
-                <Progress value={75} className="w-24" />
-                <span className="text-sm font-medium">1.2s</span>
+                <Progress value={Math.min(100, totals.avgResponseTime * 50)} className="w-24" />
+                <span className="text-sm font-medium">{totals.avgResponseTime.toFixed(2)}s</span>
               </div>
             </div>
 
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Error Rate</span>
               <div className="flex items-center space-x-2">
-                <Progress value={4.2} className="w-24" />
-                <span className="text-sm font-medium">4.2%</span>
+                <Progress value={totals.totalRequests ? (totals.totalFailed / totals.totalRequests) * 100 : 0} className="w-24" />
+                <span className="text-sm font-medium">
+                  {totals.totalRequests ? ((totals.totalFailed / totals.totalRequests) * 100).toFixed(1) : "0.0"}%
+                </span>
               </div>
             </div>
 
@@ -375,8 +361,8 @@ export function CRIFIntegration() {
               <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-yellow-800">High Response Time</p>
-                <p className="text-xs text-yellow-700 mt-1">API response time exceeded 2s threshold at 16:30</p>
-                <p className="text-xs text-yellow-600 mt-1">5 minutes ago</p>
+                <p className="text-xs text-yellow-700 mt-1">Monitor avg response time trend</p>
+                <p className="text-xs text-yellow-600 mt-1">Live</p>
               </div>
             </div>
 
@@ -401,5 +387,5 @@ export function CRIFIntegration() {
         </Card>
       </div>
     </div>
-  )
+  );
 }
