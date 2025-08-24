@@ -28,7 +28,6 @@ import {
   ChartContainer, ChartTooltip, ChartTooltipContent,
 } from "@/components/ui/chart";
 
-/* ------------------------- Types matching API shape ------------------------- */
 type TrendPoint = { attempted: number; fetched: number };
 type Trends = Record<string, TrendPoint>;
 type PerformanceRow = {
@@ -44,16 +43,20 @@ type BBPSInfoResponse = {
   performance: PerformanceRow[];
 };
 
-/* ------------------------------ Data Fetching ------------------------------ */
-async function fetchBBPSInfo(payload: { startDate?: string; endDate?: string }) {
+async function fetchBBPSInfo(payload?: { startDate?: string; endDate?: string }) {
+  const body: Record<string, string> = {};
+  if (payload?.startDate) body.startDate = payload.startDate;
+  if (payload?.endDate) body.endDate = payload.endDate;
+
   const res = await fetch("/api/bbps-info", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body), // can be {} when no dates chosen; API now defaults safely
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`Failed to fetch bbps-info: ${res.status}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch bbps-info: ${res.status}${text ? ` – ${text}` : ""}`);
   }
   return (await res.json()) as BBPSInfoResponse;
 }
@@ -67,10 +70,9 @@ export function AccountSummary() {
   const [selectedBiller, setSelectedBiller] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Build request payload (optional date range)
   const payload = useMemo(() => {
-    const startDate = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : "";
-    const endDate = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : "";
+    const startDate = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : undefined;
+    const endDate = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : undefined;
     return { startDate, endDate };
   }, [dateRange]);
 
@@ -80,7 +82,7 @@ export function AccountSummary() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetchBBPSInfo(payload);
+        const res = await fetchBBPSInfo(payload); // always POST
         if (!cancelled) setData(res);
       } catch (e: any) {
         if (!cancelled) setError(e?.message ?? "Unknown error");
@@ -93,7 +95,6 @@ export function AccountSummary() {
     };
   }, [payload]);
 
-  // Convert trends object -> chart array sorted by date
   const trendSeries = useMemo(() => {
     if (!data?.trends) return [];
     return Object.entries(data.trends)
@@ -112,7 +113,6 @@ export function AccountSummary() {
     return filtered;
   }, [data, searchTerm, selectedBiller]);
 
-  // Cards: aggregate
   const { totalAttempted, totalFetched, overallSuccessRate } = useMemo(() => {
     const attempted = billerRows.reduce((s, r) => s + r.attempted, 0);
     const fetched = billerRows.reduce((s, r) => s + r.fetched, 0);
@@ -160,7 +160,6 @@ export function AccountSummary() {
           <Button
             variant="outline"
             onClick={() => {
-              // quick export of current JSON
               const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], {
                 type: "application/json",
               });
@@ -191,8 +190,7 @@ export function AccountSummary() {
               {loading ? "…" : totalAttempted.toLocaleString()}
             </div>
             <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
-              {/* placeholder delta; replace if backend provides deltas */}
+              <TrendingUp className="w-3 h-3 mr-1" />
               Based on selected range
             </div>
           </CardContent>
@@ -208,7 +206,7 @@ export function AccountSummary() {
               {loading ? "…" : totalFetched.toLocaleString()}
             </div>
             <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
+              <TrendingUp className="w-3 h-3 mr-1" />
               Based on selected range
             </div>
           </CardContent>
@@ -225,7 +223,6 @@ export function AccountSummary() {
             </div>
             <Progress value={overallSuccessRate} className="mt-2" />
             <div className="flex items-center text-xs text-muted-foreground mt-1">
-              <TrendingUp className="w-3 h-3 mr-1 text-green-500" />
               Higher is better
             </div>
           </CardContent>
@@ -239,7 +236,6 @@ export function AccountSummary() {
           <CardContent>
             <div className="text-2xl font-bold">{loading ? "…" : billerRows.length}</div>
             <div className="flex items-center text-xs text-muted-foreground">
-              <CheckCircle className="w-3 h-3 mr-1 text-green-500" />
               Based on current table
             </div>
           </CardContent>
@@ -271,7 +267,7 @@ export function AccountSummary() {
               </LineChart>
             </ResponsiveContainer>
           </ChartContainer>
-          {error && <p className="text-sm text-red-600 mt-3">Error: {error}</p>}
+          {error && <p className="text-sm text-red-600 mt-3 break-all">{error}</p>}
         </CardContent>
       </Card>
 
